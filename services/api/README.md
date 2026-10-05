@@ -28,5 +28,6 @@ GitHub Actions provides a fresh PostgreSQL test database automatically.
 
 ## Staging
 
-See [`docs/staging.md`](../../docs/staging.md) for the separate staging
-environment checklist, required configuration, and deployment smoke tests.
+The API build emits a compiled Node.js server under `dist`; `npm start` runs
+that output. See [`docs/staging.md`](../../docs/staging.md) for Render service
+configuration, one-time staging database initialization, and smoke tests.

@@ -4,9 +4,9 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "build": "tsc --noEmit",
+    "build": "tsc",
     "dev": "tsx watch src/server.ts",
-    "start": "tsx src/server.ts",
+    "start": "node dist/src/server.js",
     "test": "npm run test:unit && npm run test:integration",
     "test:unit": "tsx --test src/modules/auth/auth.middleware.test.ts",
     "test:integration": "tsx --test src/integration.test.ts",

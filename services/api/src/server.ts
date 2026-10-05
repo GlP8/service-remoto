@@ -7,6 +7,6 @@ import { env } from './config/env.js';
 const server = createServer(app);
 setupTechnicianWebSocket(server);
 
-server.listen(env.PORT, () => {
+server.listen(env.PORT, '0.0.0.0', () => {
   console.log(`API listening on port ${env.PORT}`);
 });
