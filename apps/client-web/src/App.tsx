@@ -3,9 +3,9 @@ import { ArrowUpRight, CheckCircle2, ChevronDown, CircleHelp, Laptop, LifeBuoy, 
 import { AuthScreen } from './AuthScreen'
 import { TechnicianDashboard } from './TechnicianDashboard'
 import { ClientWebSocketStatus, useClientWebSocket } from './hooks/useClientWebSocket'
+import { API_URL } from './config'
 import './App.css'
 
-const API_URL = import.meta.env.VITE_API_URL ?? 'http://localhost:3000'
 type User = { id: number; email: string; name: string | null; role: string }
 type Computer = { id: number; os: string; ram: string; storageFree: string; rustdeskId: string; status: 'ONLINE' | 'OFFLINE' }
 type Ticket = { id: number; computerId: number | null; status: 'PENDING' | 'ACTIVE' | 'CLOSED'; createdAt: string; rustdeskSessionToken: string; technicianId?: number | null; technicianName?: string | null; connectedAt?: string | null; disconnectedAt?: string | null }

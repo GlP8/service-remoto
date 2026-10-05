@@ -25,3 +25,8 @@ The integration suite drops and recreates the tables in that database. It
 refuses to run when the database name does not end in `_test`. Never point
 `TEST_DATABASE_URL` at a development, staging, or production database.
 GitHub Actions provides a fresh PostgreSQL test database automatically.
+
+## Staging
+
+See [`docs/staging.md`](../../docs/staging.md) for the separate staging
+environment checklist, required configuration, and deployment smoke tests.

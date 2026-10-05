@@ -1,7 +1,7 @@
 import { useState, type FormEvent } from 'react'
 import { ArrowUpRight, ShieldCheck } from 'lucide-react'
+import { API_URL } from './config'
 
-const API_URL = import.meta.env.VITE_API_URL ?? 'http://localhost:3000'
 type Session = { user: { id: number; email: string; name: string | null; role: string }; token: string }
 
 export function AuthScreen({ onLogin }: { onLogin: (result: Session) => void }) {

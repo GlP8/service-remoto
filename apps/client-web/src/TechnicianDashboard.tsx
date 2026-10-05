@@ -1,8 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { Monitor, RefreshCw, ShieldCheck, TicketCheck, X } from 'lucide-react'
+import { API_URL } from './config'
 import './App.css'
-
-const API_URL = import.meta.env.VITE_API_URL ?? 'http://localhost:3000'
 
 type Ticket = {
   id: number

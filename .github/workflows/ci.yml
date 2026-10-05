@@ -57,3 +57,8 @@ jobs:
       - run: npm ci
       - run: npm run lint
       - run: npm run build
+        env:
+          VITE_API_URL: https://api.example.com
+      - run: npm run build:staging
+        env:
+          VITE_API_URL: https://api-staging.example.com

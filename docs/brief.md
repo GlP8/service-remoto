@@ -345,9 +345,12 @@ Nunca subir `.env` al repositorio ni compartir tokens, contrasenas o claves Stri
 - Panel cliente.
 - Branding y responsive.
 - Stripe preparado en backend.
+- Pruebas automatizadas de API y CI en GitHub Actions.
+- Builds de cliente para produccion y staging con validacion de URL API.
 
 ### No terminado
 
+- Despliegue del entorno staging; instrucciones y plantillas en [`staging.md`](staging.md).
 - Agente nativo RustDesk con ventana flotante.
 - Boton local que mate la sesion RustDesk en el equipo cliente.
 - Servidor `hbbs`/`hbbr` en VPS.
@@ -357,8 +360,7 @@ Nunca subir `.env` al repositorio ni compartir tokens, contrasenas o claves Stri
 - Suscripciones recurrentes completas.
 - Refresh tokens HttpOnly.
 - Roles PostgreSQL separados para inmutabilidad fuerte.
-- Tests automatizados.
-- Docker y CI/CD.
+- Flujo automatizado de CI/CD para despliegue.
 - Backups y monitorizacion productiva.
 
 ## 13. Prioridad recomendada
@@ -403,14 +405,11 @@ Crear el agente nativo que:
 
 ### Prioridad 5: pruebas y despliegue
 
-- Tests de autenticacion.
-- Tests de consentimiento.
-- Tests de auditoria append-only.
-- Tests de WebSocket.
-- Tests Stripe.
+- Ampliar pruebas de autenticacion, consentimiento, auditoria y WebSocket.
+- Tests de Stripe.
 - Tests E2E del panel.
 - Docker.
-- CI/CD.
+- Aprovisionar staging y configurar CD; ver [`staging.md`](staging.md).
 
 ## 14. Criterios de aceptacion de seguridad
 

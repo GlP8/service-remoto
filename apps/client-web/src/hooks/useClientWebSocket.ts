@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { API_URL } from '../config'
 
 export const ClientWebSocketStatus = {
   CONNECTED: 'CONNECTED',
@@ -18,8 +19,6 @@ type UseClientWebSocketOptions<TTicket> = {
   reconnectBaseDelayMs?: number
   reconnectMaxDelayMs?: number
 }
-
-const API_URL = import.meta.env.VITE_API_URL ?? 'http://localhost:3000'
 
 function websocketUrl(token: string) {
   const url = new URL(API_URL)
