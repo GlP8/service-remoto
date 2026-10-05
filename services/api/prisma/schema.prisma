@@ -1,0 +1,104 @@
+// use prisma-8
+enum UserRole {
+  CLIENT
+  TECHNICIAN
+  ADMIN
+}
+
+enum ComputerStatus {
+  ONLINE
+  OFFLINE
+}
+
+enum TicketStatus {
+  PENDING
+  ACTIVE
+  CLOSED
+}
+
+enum PaymentStatus {
+  PENDING
+  PAID
+  FAILED
+  CANCELED
+  REFUNDED
+}
+
+enum ConnectionAuditAction {
+  STARTED
+  ENDED
+}
+
+model User {
+  id                       Int                        @id @default(autoincrement())
+  email                    String                     @unique
+  passwordHash             String
+  name                     String?
+  role                     UserRole                   @default(CLIENT)
+  diagnosticConsentAt      TimestamptzString?
+  diagnosticConsentVersion String?
+  createdAt                TimestamptzString          @default(now())
+  updatedAt                temporal.updatedAtString()
+
+  computers                Computer[]
+  clientTickets            Ticket[]                   @relation("ClientTickets")
+  technicianTickets        Ticket[]                   @relation("TechnicianTickets")
+  payments                 Payment[]
+  connectionAuditLogs      ConnectionAuditLog[]       @relation("TechnicianConnectionAudit")
+}
+
+model Computer {
+  id          Int            @id @default(autoincrement())
+  userId      Int
+  os          String
+  ram         String
+  storageFree String
+  rustdeskId  String         @unique
+  status      ComputerStatus @default(OFFLINE)
+
+  user        User           @relation(fields:[userId], references:[id])
+  tickets     Ticket[]
+}
+
+model Ticket {
+  id                   Int                        @id @default(autoincrement())
+  clientId             Int
+  technicianId         Int?
+  computerId           Int?
+  status               TicketStatus               @default(PENDING)
+  rustdeskSessionToken String                     @unique
+  connectedAt          TimestamptzString?
+  disconnectedAt       TimestamptzString?
+  createdAt            TimestamptzString          @default(now())
+  updatedAt            temporal.updatedAtString()
+
+  client               User                       @relation("ClientTickets", fields:[clientId], references:[id])
+  technician           User?                      @relation("TechnicianTickets", fields:[technicianId], references:[id])
+  computer             Computer?                  @relation(fields:[computerId], references:[id])
+  connectionAuditLogs  ConnectionAuditLog[]
+}
+
+model ConnectionAuditLog {
+  id           Int                   @id @default(autoincrement())
+  ticketId     Int
+  technicianId Int
+  action       ConnectionAuditAction
+  occurredAt   TimestamptzString     @default(now())
+  reason       String?
+
+  ticket       Ticket                @relation(fields:[ticketId], references:[id], onDelete: Restrict)
+  technician   User                  @relation("TechnicianConnectionAudit", fields:[technicianId], references:[id], onDelete: Restrict)
+}
+
+model Payment {
+  id                      Int                        @id @default(autoincrement())
+  userId                  Int
+  stripeSubscriptionId    String?                    @unique
+  stripeCheckoutSessionId String?                    @unique
+  amount                  Decimal
+  status                  PaymentStatus              @default(PENDING)
+  createdAt               TimestamptzString          @default(now())
+  updatedAt               temporal.updatedAtString()
+
+  user                    User                       @relation(fields:[userId], references:[id])
+}
