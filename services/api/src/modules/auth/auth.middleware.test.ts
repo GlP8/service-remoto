@@ -21,6 +21,8 @@ const { requireAuth, requireRole } = await import('./auth.middleware.js');
 const { authRouter } = await import('./auth.routes.js');
 const { computerRouter } = await import('../computers/computer.routes.js');
 const { ticketRouter } = await import('../tickets/ticket.routes.js');
+const { isAllowedWebSocketOrigin } = await import('../../infrastructure/realtime/technician-hub.js');
+const { env } = await import('../../config/env.js');
 
 const app = express();
 app.use(express.json());
@@ -232,4 +234,35 @@ test('registration rejects invalid email and short passwords before database acc
   });
   assert.equal(invalidEmail.status, 400);
   assert.equal(shortPassword.status, 400);
+});
+
+test('login rate limit rejects repeated authentication attempts', async () => {
+  let status = 0;
+  for (let attempt = 0; attempt < 12; attempt += 1) {
+    const response = await fetch(`${baseUrl}/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: 'missing@example.invalid', password: 'valid-test-password' }),
+    });
+    status = response.status;
+    if (status === 429) break;
+    assert.ok(status === 401 || status === 500);
+  }
+  assert.equal(status, 429);
+});
+
+test('computer registration rejects excessively long metadata', async () => {
+  const response = await sendJson('/computers', makeToken('CLIENT'), 'POST', {
+    os: 'W'.repeat(101),
+    ram: '16 GB',
+    storageFree: '250 GB',
+    rustdeskId: '123456',
+  });
+  assert.equal(response.status, 400);
+});
+
+test('WebSocket origins are limited to the configured client origin', () => {
+  assert.equal(isAllowedWebSocketOrigin(env.CLIENT_ORIGIN), true);
+  assert.equal(isAllowedWebSocketOrigin('https://attacker.example'), false);
+  assert.equal(isAllowedWebSocketOrigin(undefined), true);
 });

@@ -253,6 +253,8 @@ test('health endpoint responds and CORS only allows the configured client origin
   const health = await requestJson<{ status: string }>('/health');
   assert.equal(health.response.status, 200);
   assert.equal(health.body?.status, 'ok');
+  assert.equal(health.response.headers.get('x-powered-by'), null);
+  assert.equal(health.response.headers.get('x-content-type-options'), 'nosniff');
 
   const ready = await requestJson<{ status: string }>('/ready');
   assert.equal(ready.response.status, 200);

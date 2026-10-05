@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { z } from 'zod';
 import type { AuthenticatedRequest } from '../auth/auth.middleware.js';
 import { requireAuth, requireRole } from '../auth/auth.middleware.js';
 import { createComputer, listComputers, updateComputerStatus } from './computer.service.js';
@@ -6,22 +7,22 @@ import { createComputer, listComputers, updateComputerStatus } from './computer.
 export const computerRouter = Router();
 computerRouter.use(requireAuth, requireRole('CLIENT'));
 
-computerRouter.post('/', async (request: AuthenticatedRequest, response) => {
-  const { os, ram, storageFree, status } = request.body as Record<string, unknown>;
-  const submittedRustdeskId = (request.body as Record<string, unknown>).rustdeskId;
-  const validStatus = status === undefined || status === 'ONLINE' || status === 'OFFLINE';
+const computerSchema = z.object({
+  os: z.string().trim().min(1).max(100),
+  ram: z.string().trim().min(1).max(50),
+  storageFree: z.string().trim().min(1).max(50),
+  rustdeskId: z.string().trim().min(3).max(128),
+  status: z.enum(['ONLINE', 'OFFLINE']).optional(),
+});
 
-  if (
-    typeof os !== 'string' ||
-    typeof ram !== 'string' ||
-    typeof storageFree !== 'string' ||
-    typeof submittedRustdeskId !== 'string' ||
-    !validStatus
-  ) {
+computerRouter.post('/', async (request: AuthenticatedRequest, response) => {
+  const parsed = computerSchema.safeParse(request.body);
+  if (!parsed.success) {
     response.status(400).json({ error: 'os, ram, storageFree and rustdeskId are required' });
     return;
   }
-  const rustdeskId = submittedRustdeskId.replace(/\s+/g, '');
+  const { os, ram, storageFree, status } = parsed.data;
+  const rustdeskId = parsed.data.rustdeskId.replace(/\s+/g, '');
   if (!/^[A-Za-z0-9_-]{3,64}$/.test(rustdeskId)) {
     response.status(400).json({ error: 'rustdeskId has an invalid format' });
     return;

@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { rateLimit } from 'express-rate-limit';
 import { z } from 'zod';
 import { loginUser, registerUser } from './auth.service.js';
 
@@ -12,7 +13,20 @@ const registrationSchema = credentialsSchema.extend({
   diagnosticConsentAccepted: z.literal(true),
 });
 
-authRouter.post('/register', async (request, response) => {
+const registrationRateLimit = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  limit: 5,
+  standardHeaders: 'draft-8',
+  legacyHeaders: false,
+});
+const loginRateLimit = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 10,
+  standardHeaders: 'draft-8',
+  legacyHeaders: false,
+});
+
+authRouter.post('/register', registrationRateLimit, async (request, response) => {
   const parsed = registrationSchema.safeParse(request.body);
   if (!parsed.success) {
     response.status(400).json({ error: 'Email, password, name and mandatory diagnostic consent are required' });
@@ -31,7 +45,7 @@ authRouter.post('/register', async (request, response) => {
   }
 });
 
-authRouter.post('/login', async (request, response) => {
+authRouter.post('/login', loginRateLimit, async (request, response) => {
   const parsed = credentialsSchema.safeParse(request.body);
   if (!parsed.success) {
     response.status(400).json({ error: 'Valid email and password are required' });

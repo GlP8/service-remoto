@@ -1,5 +1,6 @@
 import cors from 'cors';
 import express from 'express';
+import helmet from 'helmet';
 import { rateLimit } from 'express-rate-limit';
 import { authRouter } from './modules/auth/auth.routes.js';
 import { computerRouter } from './modules/computers/computer.routes.js';
@@ -9,6 +10,12 @@ import { env } from './config/env.js';
 import { pool } from './infrastructure/database/pool.js';
 
 export const app = express();
+
+app.disable('x-powered-by');
+app.use(helmet({
+  contentSecurityPolicy: false,
+  hsts: env.NODE_ENV === 'production' ? { maxAge: 31_536_000, includeSubDomains: true } : false,
+}));
 
 const allowedOrigins = new Set([
   env.CLIENT_ORIGIN,
@@ -22,6 +29,12 @@ app.use(cors({
 }));
 app.use('/payments/webhook', express.raw({ type: 'application/json' }));
 app.use(express.json({ limit: '32kb' }));
+app.use(rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 300,
+  standardHeaders: 'draft-8',
+  legacyHeaders: false,
+}));
 app.use('/auth', rateLimit({ windowMs: 15 * 60 * 1000, limit: 20, standardHeaders: 'draft-8', legacyHeaders: false }));
 app.use('/auth', authRouter);
 app.use('/computers', computerRouter);

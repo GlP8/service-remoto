@@ -7,6 +7,17 @@ const technicians = new Set<WebSocket>();
 const clients = new Map<WebSocket, number>();
 const validRoles = ['CLIENT', 'TECHNICIAN', 'ADMIN'] as const;
 
+const allowedOrigins = new Set([
+  env.CLIENT_ORIGIN,
+  ...(env.NODE_ENV === 'development'
+    ? ['http://localhost:5173', 'http://127.0.0.1:5173']
+    : []),
+]);
+
+export function isAllowedWebSocketOrigin(origin: string | undefined) {
+  return origin === undefined || allowedOrigins.has(origin);
+}
+
 function isUserRole(role: unknown): role is typeof validRoles[number] {
   return typeof role === 'string' && validRoles.includes(role as typeof validRoles[number]);
 }
@@ -33,9 +44,14 @@ export function setupTechnicianWebSocket(server: Server) {
     const url = new URL(request.url ?? '/', 'http://localhost');
     const token = url.searchParams.get('token');
     const identity = token ? verifyToken(token) : null;
+    const origin = request.headers.origin;
     const isTechnicianChannel = url.pathname === '/ws/technicians';
     const isClientChannel = url.pathname === '/ws/client';
-    if ((!isTechnicianChannel && !isClientChannel) || !identity) {
+    if (
+      (!isTechnicianChannel && !isClientChannel) ||
+      !identity ||
+      (Array.isArray(origin) ? origin.some((value) => !isAllowedWebSocketOrigin(value)) : !isAllowedWebSocketOrigin(origin))
+    ) {
       socket.destroy();
       return;
     }
