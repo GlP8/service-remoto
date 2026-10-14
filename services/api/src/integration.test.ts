@@ -6,7 +6,6 @@ import { once } from 'node:events';
 import 'dotenv/config';
 import pg from 'pg';
 import { WebSocket } from 'ws';
-import { setupTechnicianWebSocket } from './infrastructure/realtime/technician-hub.js';
 
 const testDatabaseUrl = process.env['TEST_DATABASE_URL'];
 if (!testDatabaseUrl) {
@@ -26,6 +25,7 @@ process.env['CLIENT_ORIGIN'] = 'http://127.0.0.1:5173';
 
 const { pool } = await import('./infrastructure/database/pool.js');
 const { app } = await import('./app.js');
+const { setupTechnicianWebSocket } = await import('./infrastructure/realtime/technician-hub.js');
 
 const server: Server = createServer(app);
 setupTechnicianWebSocket(server);
