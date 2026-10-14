@@ -13,15 +13,11 @@ function isUserRole(role: unknown): role is typeof validRoles[number] {
   return typeof role === 'string' && validRoles.includes(role as typeof validRoles[number]);
 }
 
-export function requireAuth(request: AuthenticatedRequest, response: Response, next: NextFunction) {
-  const header = request.headers.authorization;
-  const token = header?.startsWith('Bearer ') ? header.slice(7) : undefined;
+export function bearerToken(header: string | undefined) {
+  return header?.startsWith('Bearer ') ? header.slice('Bearer '.length) : undefined;
+}
 
-  if (!token) {
-    response.status(401).json({ error: 'Unauthorized' });
-    return;
-  }
-
+export function verifyToken(token: string) {
   try {
     const payload = jwt.verify(token, env.JWT_SECRET, {
       algorithms: ['HS256'],
@@ -29,15 +25,29 @@ export function requireAuth(request: AuthenticatedRequest, response: Response, n
       issuer: env.JWT_ISSUER,
     }) as jwt.JwtPayload;
     const userId = Number(payload.sub);
-    if (!Number.isInteger(userId) || userId <= 0 || !isUserRole(payload.role)) {
-      throw new Error('Invalid token');
-    }
-    request.userId = userId;
-    request.userRole = payload.role;
-    next();
+    if (!Number.isInteger(userId) || userId <= 0 || !isUserRole(payload.role)) return null;
+    return { userId, role: payload.role };
   } catch {
-    response.status(401).json({ error: 'Invalid token' });
+    return null;
   }
+}
+
+export function requireAuth(request: AuthenticatedRequest, response: Response, next: NextFunction) {
+  const token = bearerToken(request.headers.authorization);
+
+  if (!token) {
+    response.status(401).json({ error: 'Unauthorized' });
+    return;
+  }
+
+  const identity = verifyToken(token);
+  if (!identity) {
+    response.status(401).json({ error: 'Invalid token' });
+    return;
+  }
+  request.userId = identity.userId;
+  request.userRole = identity.role;
+  next();
 }
 
 export function requireRole(...roles: NonNullable<AuthenticatedRequest['userRole']>[]) {

@@ -1,11 +1,25 @@
 import type { Server } from 'node:http';
-import jwt from 'jsonwebtoken';
 import { WebSocket, WebSocketServer } from 'ws';
 import { env } from '../../config/env.js';
+import { bearerToken, verifyToken } from '../../modules/auth/auth.middleware.js';
 
 const technicians = new Set<WebSocket>();
 const clients = new Map<WebSocket, number>();
-const validRoles = ['CLIENT', 'TECHNICIAN', 'ADMIN'] as const;
+const clientAgents = new Map<WebSocket, number>();
+const clientAgentAlive = new WeakMap<WebSocket, boolean>();
+
+const clientAgentHeartbeat = setInterval(() => {
+  for (const agent of clientAgents.keys()) {
+    if (agent.readyState !== WebSocket.OPEN) continue;
+    if (clientAgentAlive.get(agent) === false) {
+      agent.terminate();
+      continue;
+    }
+    clientAgentAlive.set(agent, false);
+    agent.ping();
+  }
+}, 30_000);
+clientAgentHeartbeat.unref();
 
 const allowedOrigins = new Set([
   env.CLIENT_ORIGIN,
@@ -18,37 +32,21 @@ export function isAllowedWebSocketOrigin(origin: string | undefined) {
   return origin === undefined || allowedOrigins.has(origin);
 }
 
-function isUserRole(role: unknown): role is typeof validRoles[number] {
-  return typeof role === 'string' && validRoles.includes(role as typeof validRoles[number]);
-}
-
-function verifyToken(token: string) {
-  try {
-    const payload = jwt.verify(token, env.JWT_SECRET, {
-      algorithms: ['HS256'],
-      audience: env.JWT_AUDIENCE,
-      issuer: env.JWT_ISSUER,
-    }) as jwt.JwtPayload;
-    const userId = Number(payload.sub);
-    if (!Number.isInteger(userId) || userId <= 0 || !isUserRole(payload.role)) return null;
-    return { userId, role: payload.role };
-  } catch {
-    return null;
-  }
-}
-
 export function setupTechnicianWebSocket(server: Server) {
   const socketServer = new WebSocketServer({ noServer: true });
 
   server.on('upgrade', (request, socket, head) => {
     const url = new URL(request.url ?? '/', 'http://localhost');
-    const token = url.searchParams.get('token');
+    // Native agents send the token in a header so it stays out of URLs and access logs;
+    // browsers cannot set WebSocket headers, so they keep using the query parameter.
+    const token = bearerToken(request.headers.authorization) || url.searchParams.get('token');
     const identity = token ? verifyToken(token) : null;
     const origin = request.headers.origin;
     const isTechnicianChannel = url.pathname === '/ws/technicians';
     const isClientChannel = url.pathname === '/ws/client';
+    const isClientAgentChannel = url.pathname === '/ws/agent';
     if (
-      (!isTechnicianChannel && !isClientChannel) ||
+      (!isTechnicianChannel && !isClientChannel && !isClientAgentChannel) ||
       !identity ||
       (Array.isArray(origin) ? origin.some((value) => !isAllowedWebSocketOrigin(value)) : !isAllowedWebSocketOrigin(origin))
     ) {
@@ -59,16 +57,24 @@ export function setupTechnicianWebSocket(server: Server) {
       socket.destroy();
       return;
     }
-    if (isClientChannel && identity.role !== 'CLIENT') {
+    if ((isClientChannel || isClientAgentChannel) && identity.role !== 'CLIENT') {
       socket.destroy();
       return;
     }
 
     socketServer.handleUpgrade(request, socket, head, (webSocket) => {
       if (identity.role === 'CLIENT') {
-        clients.set(webSocket, identity.userId);
-        webSocket.send(JSON.stringify({ type: 'connected', channel: 'client' }));
-        webSocket.on('close', () => clients.delete(webSocket));
+        if (isClientAgentChannel) {
+          clientAgents.set(webSocket, identity.userId);
+          clientAgentAlive.set(webSocket, true);
+          webSocket.on('pong', () => clientAgentAlive.set(webSocket, true));
+          webSocket.send(JSON.stringify({ type: 'connected', channel: 'agent' }));
+          webSocket.on('close', () => clientAgents.delete(webSocket));
+        } else {
+          clients.set(webSocket, identity.userId);
+          webSocket.send(JSON.stringify({ type: 'connected', channel: 'client' }));
+          webSocket.on('close', () => clients.delete(webSocket));
+        }
         return;
       }
       technicians.add(webSocket);
@@ -85,11 +91,21 @@ export function notifyTicketCreated(ticket: { id: number; status: string; rustde
   }
 }
 
+function sendToClient(connections: Map<WebSocket, number>, clientId: number, event: string) {
+  let delivered = false;
+  for (const [client, userId] of connections) {
+    if (userId === clientId && client.readyState === WebSocket.OPEN) {
+      client.send(event);
+      delivered = true;
+    }
+  }
+  return delivered;
+}
+
 export function notifyTicketUpdated(ticket: { id: number; clientId: number; status: string; technicianId: number | null; technicianName?: string | null; connectedAt?: string | null; disconnectedAt?: string | null }) {
   const event = JSON.stringify({ type: 'ticket.updated', ticket });
-  for (const [client, userId] of clients) {
-    if (userId === ticket.clientId && client.readyState === WebSocket.OPEN) client.send(event);
-  }
+  sendToClient(clients, ticket.clientId, event);
+  sendToClient(clientAgents, ticket.clientId, event);
 }
 
 export function notifyClientTicketUpdate(
@@ -97,10 +113,21 @@ export function notifyClientTicketUpdate(
   ticket: { id: number; clientId: number; status: string; technicianId: number | null; technicianName?: string | null; connectedAt?: string | null; disconnectedAt?: string | null },
 ) {
   const event = JSON.stringify({ type: 'ticket.updated', ticket: { ...ticket, clientId } });
-  for (const [client, userId] of clients) {
-    if (userId === clientId && client.readyState === WebSocket.OPEN) client.send(event);
-  }
+  sendToClient(clients, clientId, event);
+  sendToClient(clientAgents, clientId, event);
   for (const technician of technicians) {
     if (technician.readyState === WebSocket.OPEN) technician.send(event);
   }
+}
+
+export function notifyClientConnectionRequested(
+  clientId: number,
+  request: {
+    ticketId: number;
+    technicianId: number;
+    technicianName: string | null;
+    rustdeskId: string;
+  },
+) {
+  return sendToClient(clientAgents, clientId, JSON.stringify({ type: 'connection.requested', request }));
 }

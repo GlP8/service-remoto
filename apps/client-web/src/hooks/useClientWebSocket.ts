@@ -15,6 +15,8 @@ type TicketUpdate<TTicket> = {
 }
 
 type UseClientWebSocketOptions<TTicket> = {
+  // Client session token; the socket (re)connects whenever it changes, e.g. after login.
+  token?: string | null
   onTicketUpdated?: (ticket: TTicket) => void
   reconnectBaseDelayMs?: number
   reconnectMaxDelayMs?: number
@@ -29,6 +31,7 @@ function websocketUrl(token: string) {
 }
 
 export function useClientWebSocket<TTicket>({
+  token,
   onTicketUpdated,
   reconnectBaseDelayMs = 500,
   reconnectMaxDelayMs = 10_000,
@@ -45,21 +48,7 @@ export function useClientWebSocket<TTicket>({
   }, [onTicketUpdated])
 
   useEffect(() => {
-    const token = sessionStorage.getItem('service-remoto-session')
     if (!token) {
-      setStatus(ClientWebSocketStatus.DISCONNECTED)
-      return
-    }
-
-    let parsedSession: { token?: string; user?: { role?: string } }
-    try {
-      parsedSession = JSON.parse(token) as { token?: string; user?: { role?: string } }
-    } catch {
-      setStatus(ClientWebSocketStatus.DISCONNECTED)
-      return
-    }
-
-    if (!parsedSession.token || parsedSession.user?.role !== 'CLIENT') {
       setStatus(ClientWebSocketStatus.DISCONNECTED)
       return
     }
@@ -90,7 +79,7 @@ export function useClientWebSocket<TTicket>({
     const connect = () => {
       if (stoppedRef.current) return
       setStatus(ClientWebSocketStatus.CONNECTING)
-      const socket = new WebSocket(websocketUrl(parsedSession.token!))
+      const socket = new WebSocket(websocketUrl(token))
       socketRef.current = socket
 
       socket.onopen = () => {
@@ -130,7 +119,7 @@ export function useClientWebSocket<TTicket>({
       if (socket && socket.readyState < WebSocket.CLOSING) socket.close()
       setStatus(ClientWebSocketStatus.DISCONNECTED)
     }
-  }, [reconnectBaseDelayMs, reconnectMaxDelayMs])
+  }, [token, reconnectBaseDelayMs, reconnectMaxDelayMs])
 
   return { status }
 }

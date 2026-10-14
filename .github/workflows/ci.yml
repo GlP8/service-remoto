@@ -62,3 +62,13 @@ jobs:
       - run: npm run build:staging
         env:
           VITE_API_URL: https://api-staging.example.com
+
+  windows-agent:
+    name: Windows agent build
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: apps/windows-agent
+    steps:
+      - uses: actions/checkout@v4
+      - run: .\build.ps1

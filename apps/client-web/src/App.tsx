@@ -33,6 +33,7 @@ export default function App() {
   }
   useEffect(() => { void loadDashboard() }, [session?.token])
   const { status: websocketStatus } = useClientWebSocket<Ticket>({
+    token: session?.user.role === 'CLIENT' ? session.token : null,
     onTicketUpdated: (updatedTicket) => {
       setTickets((current) => current.map((ticket) => (
         ticket.id === updatedTicket.id ? { ...ticket, ...updatedTicket } : ticket
