@@ -39,8 +39,9 @@ credentials into staging.
 Use a temporary HTTPS `CLIENT_ORIGIN` while the static site is being created.
 After obtaining the actual static-site URL, update both `CLIENT_ORIGIN` and
 `CLIENT_APP_URL` to that exact staging origin, then redeploy the API. Leave
-`RUSTDESK_EXECUTE=false`; leave Stripe unset unless a separate test-mode setup
-is ready.
+Stripe unset unless a separate test-mode setup is ready. RustDesk requests go
+to a connected client agent and still require both agent approval and RustDesk's
+native confirmation.
 
 ## Initialize the empty staging database
 
@@ -80,9 +81,12 @@ described above.
    claimed by a staging technician, and closed.
 4. Confirm the browser connects only to the staging API, including its
    WebSocket connection.
-5. Confirm `RUSTDESK_EXECUTE` remains `false`; do not initiate a real remote
-   session during these tests.
-6. Delete test accounts and records according to the staging retention policy.
+5. Do not use real customer data or accept an unplanned remote session.
+6. On a disposable Windows 10/11 machine, start the pilot agent with a test
+   CLIENT account and verify that an access request is delivered to its
+   dedicated agent channel. Test rejection; do not attempt a real remote
+   session with this unsigned pilot.
+7. Delete test accounts and records according to the staging retention policy.
 
 Do not connect production data, invite real customers, or enable live billing
 until backups, restore procedures, monitoring, access control, and a rollback

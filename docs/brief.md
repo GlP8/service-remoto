@@ -2,7 +2,7 @@
 
 ## 1. Resumen ejecutivo
 
-Service Remoto es una plataforma web para una startup de mantenimiento tecnico de computadores 100% remoto. El cliente solicita asistencia desde un panel, el equipo tecnico recibe la alerta, reclama el ticket y puede iniciar una sesion RustDesk sobre el computador autorizado.
+Service Remoto es una plataforma web para una startup de mantenimiento tecnico de computadores 100% remoto. El cliente solicita asistencia desde un panel, el equipo tecnico recibe la alerta, reclama el ticket y solicita acceso RustDesk al agente local del equipo autorizado.
 
 El producto prioriza:
 
@@ -23,15 +23,16 @@ Permitir que una persona sin conocimientos tecnicos pueda:
 3. Registrar su computador y su RustDesk ID.
 4. Solicitar soporte con un boton.
 5. Ver el estado de la solicitud en tiempo real.
-6. Saber que tecnico esta conectado.
-7. Cerrar la conexion inmediatamente si lo necesita.
-8. Consultar el historial de soporte y conexiones.
+6. Saber que tecnico solicita acceso.
+7. Aprobarlo tanto en el agente local como en el dialogo nativo de RustDesk.
+8. Cerrar la solicitud inmediatamente desde el agente local.
+9. Consultar el historial de soporte y conexiones.
 
 El equipo tecnico debe poder:
 
 1. Recibir tickets en tiempo real.
 2. Reclamar una solicitud.
-3. Iniciar RustDesk solo sobre un ticket autorizado.
+3. Solicitar aprobacion local antes de usar RustDesk sobre un ticket autorizado.
 4. Ver el RustDesk ID del equipo.
 5. Cerrar la atencion y dejar un registro auditable.
 
@@ -66,7 +67,7 @@ El equipo tecnico debe poder:
 - RustDesk cliente.
 - RustDesk Server ID (`hbbs`).
 - RustDesk Relay (`hbbr`).
-- Ejecucion controlada de `rustdesk.exe`.
+- Agente local Windows para consentimiento explicito.
 - VPS Linux con dominio, claves y TLS.
 
 ## 4. Estructura actual
@@ -198,11 +199,10 @@ La API bloquea nuevas solicitudes si el cliente ya tiene un ticket `PENDING` o `
 4. Reclama el ticket con `PATCH /tickets/:id/claim`.
 5. El ticket queda `ACTIVE` y se asigna `technicianId`.
 6. Solicita conexion con `POST /tickets/:id/connect`.
-7. La API valida ticket, tecnico, equipo y RustDesk ID.
-8. Si `RUSTDESK_EXECUTE=false`, solo devuelve el comando preparado.
-9. Si esta habilitado, verifica el binario, ejecuta RustDesk y registra `connectedAt`.
-10. El tecnico cierra con `PATCH /tickets/:id/close`.
-11. La API registra `disconnectedAt` y evento `ENDED`.
+7. La API valida ticket, tecnico, equipo y RustDesk ID y envia una solicitud efimera al agente Windows conectado.
+8. El cliente aprueba o rechaza; al aprobar, el agente abre RustDesk y el cliente confirma tambien en su dialogo nativo.
+9. El tecnico inicia RustDesk desde su equipo con el ID mostrado; la API no inicia procesos en el servidor.
+10. El cierre de ticket no demuestra que la sesion RustDesk haya terminado; el cliente usa el boton local del agente.
 
 ## 8. API actual
 
@@ -303,10 +303,9 @@ http://localhost:5173/
 - Consultas PostgreSQL parametrizadas.
 - Verificacion de propiedad de computadores.
 - Verificacion de propiedad y estado de tickets.
-- RustDesk no se ejecuta por defecto.
+- Solicitudes RustDesk dirigidas al agente local, no ejecutadas en el servidor API.
 - Validacion de RustDesk ID.
-- Ruta RustDesk absoluta y comprobacion del ejecutable.
-- Registro append-only de conexiones.
+- Confirmacion explicita en el agente piloto de Windows.
 
 ## 11. Variables de entorno
 
@@ -316,8 +315,6 @@ JWT_SECRET="..."
 CLIENT_ORIGIN="http://localhost:5173"
 CLIENT_APP_URL="http://localhost:5173"
 DIAGNOSTIC_CONSENT_VERSION="2026-09-24-v1"
-RUSTDESK_BIN="C:/Program Files/RustDesk/rustdesk.exe"
-RUSTDESK_EXECUTE="false"
 STRIPE_SECRET_KEY="sk_test_..."
 STRIPE_WEBHOOK_SECRET="whsec_..."
 ```
@@ -339,20 +336,21 @@ Nunca subir `.env` al repositorio ni compartir tokens, contrasenas o claves Stri
 - Roles.
 - WebSockets.
 - Flujo `PENDING -> ACTIVE -> CLOSED`.
-- RustDesk en modo preparado y controlado.
-- Auditoria de conexion en Ticket.
+- Solicitud autenticada de acceso RustDesk al agente local, sin iniciar RustDesk en el servidor.
+- Estructura de auditoria de conexion en Ticket (telemetria real pendiente).
 - Tabla append-only de auditoria.
 - Panel cliente.
 - Branding y responsive.
 - Stripe preparado en backend.
 - Pruebas automatizadas de API y CI en GitHub Actions.
 - Builds de cliente para produccion y staging con validacion de URL API.
+- Agente piloto Windows con confirmacion local y boton para terminar RustDesk.
 
 ### No terminado
 
 - Despliegue del entorno staging; instrucciones y plantillas en [`staging.md`](staging.md).
-- Agente nativo RustDesk con ventana flotante.
-- Boton local que mate la sesion RustDesk en el equipo cliente.
+- Agente Windows 10/11 en piloto; falta deteccion fiable del inicio/fin real de sesion.
+- Instalador firmado, actualizaciones y comportamiento RustDesk elevado pendientes.
 - Servidor `hbbs`/`hbbr` en VPS.
 - TLS productivo para RustDesk.
 - Claves RustDesk propias y rotacion.
@@ -375,6 +373,11 @@ Crear el agente nativo que:
 - Permita cerrar la conexion localmente.
 - Informe el inicio y fin al backend.
 - No permita acceso desatendido por defecto.
+
+**Estado:** el piloto Windows esta en [`apps/windows-agent/README.md`](../apps/windows-agent/README.md).
+Todavia no detecta sesiones RustDesk reales, no audita el consentimiento de
+forma persistente, no impone el consentimiento como bloqueo de red y no es apto
+para distribuir a clientes.
 
 ### Prioridad 2: infraestructura RustDesk
 
@@ -416,7 +419,7 @@ Crear el agente nativo que:
 El producto no debe considerarse listo para produccion hasta que:
 
 - El consentimiento sea obligatorio y versionado.
-- Toda conexion tenga tecnico, inicio y fin.
+- Toda conexion real tenga tecnico, inicio y fin verificados (pendiente: el agente piloto no puede observar el estado real).
 - El cliente pueda cerrar la sesion localmente.
 - RustDesk no opere como espia o acceso desatendido por defecto.
 - El servidor RustDesk use claves propias y TLS configurado.

@@ -1,10 +1,37 @@
-import { Router } from 'express';
+import { Router, type Response } from 'express';
 import type { AuthenticatedRequest } from '../auth/auth.middleware.js';
 import { requireAuth, requireRole } from '../auth/auth.middleware.js';
-import { notifyClientTicketUpdate, notifyTicketCreated, notifyTicketUpdated } from '../../infrastructure/realtime/technician-hub.js';
-import { claimTicket, closeTicket, connectTicket, createTicket, disconnectTicket, listTickets, TicketActionError } from './ticket.service.js';
+import { notifyClientConnectionRequested, notifyClientTicketUpdate, notifyTicketCreated, notifyTicketUpdated } from '../../infrastructure/realtime/technician-hub.js';
+import { claimTicket, closeTicket, connectTicket, createTicket, declineConnectionRequest, disconnectTicket, listTickets, TicketActionError } from './ticket.service.js';
 
 export const ticketRouter = Router();
+
+function parseTicketId(request: AuthenticatedRequest, response: Response) {
+  const ticketId = Number(request.params['ticketId']);
+  if (Number.isInteger(ticketId)) return ticketId;
+  response.status(400).json({ error: 'ticketId must be an integer' });
+  return null;
+}
+
+function sendClientTicketActionError(
+  response: Response,
+  error: unknown,
+  messages: { forbidden: string; notActive: string; failed: string },
+) {
+  if (error instanceof TicketActionError && error.code === 'TICKET_NOT_FOUND') {
+    response.status(404).json({ error: 'Ticket not found' });
+    return;
+  }
+  if (error instanceof TicketActionError && error.code === 'TICKET_FORBIDDEN') {
+    response.status(403).json({ error: messages.forbidden });
+    return;
+  }
+  if (error instanceof TicketActionError && error.code === 'TICKET_NOT_ACTIVE') {
+    response.status(409).json({ error: messages.notActive });
+    return;
+  }
+  response.status(500).json({ error: messages.failed });
+}
 
 ticketRouter.use(requireAuth);
 
@@ -44,11 +71,8 @@ ticketRouter.get('/', async (request: AuthenticatedRequest, response) => {
 });
 
 ticketRouter.patch('/:ticketId/claim', requireRole('TECHNICIAN', 'ADMIN'), async (request: AuthenticatedRequest, response) => {
-  const ticketId = Number(request.params['ticketId']);
-  if (!Number.isInteger(ticketId)) {
-    response.status(400).json({ error: 'ticketId must be an integer' });
-    return;
-  }
+  const ticketId = parseTicketId(request, response);
+  if (ticketId === null) return;
 
   const ticket = await claimTicket(ticketId, request.userId!);
   if (!ticket) {
@@ -60,11 +84,8 @@ ticketRouter.patch('/:ticketId/claim', requireRole('TECHNICIAN', 'ADMIN'), async
 });
 
 ticketRouter.patch('/:ticketId/close', requireRole('TECHNICIAN', 'ADMIN'), async (request: AuthenticatedRequest, response) => {
-  const ticketId = Number(request.params['ticketId']);
-  if (!Number.isInteger(ticketId)) {
-    response.status(400).json({ error: 'ticketId must be an integer' });
-    return;
-  }
+  const ticketId = parseTicketId(request, response);
+  if (ticketId === null) return;
 
   const ticket = await closeTicket(ticketId, request.userId!, request.userRole === 'ADMIN');
   if (!ticket) {
@@ -76,12 +97,9 @@ ticketRouter.patch('/:ticketId/close', requireRole('TECHNICIAN', 'ADMIN'), async
 });
 
 ticketRouter.post('/:ticketId/disconnect', async (request: AuthenticatedRequest, response) => {
-  const ticketId = Number(request.params['ticketId']);
+  const ticketId = parseTicketId(request, response);
   const authenticatedUserId = request.userId;
-  if (!Number.isInteger(ticketId)) {
-    response.status(400).json({ error: 'ticketId must be an integer' });
-    return;
-  }
+  if (ticketId === null) return;
   if (!authenticatedUserId) {
     response.status(401).json({ error: 'Unauthorized' });
     return;
@@ -92,43 +110,44 @@ ticketRouter.post('/:ticketId/disconnect', async (request: AuthenticatedRequest,
     notifyClientTicketUpdate(updatedTicket.clientId, updatedTicket);
     response.status(200).json({ ticket: updatedTicket });
   } catch (error) {
-    if (error instanceof TicketActionError && error.code === 'TICKET_NOT_FOUND') {
-      response.status(404).json({ error: 'Ticket not found' });
-      return;
-    }
-    if (error instanceof TicketActionError && error.code === 'TICKET_FORBIDDEN') {
-      response.status(403).json({ error: 'You cannot disconnect another client ticket' });
-      return;
-    }
-    if (error instanceof TicketActionError && error.code === 'TICKET_NOT_ACTIVE') {
-      response.status(409).json({ error: 'Ticket is not active' });
-      return;
-    }
-    response.status(500).json({ error: 'Unable to disconnect ticket' });
+    sendClientTicketActionError(response, error, {
+      forbidden: 'You cannot disconnect another client ticket',
+      notActive: 'Ticket is not active',
+      failed: 'Unable to disconnect ticket',
+    });
+  }
+});
+
+ticketRouter.post('/:ticketId/decline', requireRole('CLIENT'), async (request: AuthenticatedRequest, response) => {
+  const ticketId = parseTicketId(request, response);
+  if (ticketId === null) return;
+
+  try {
+    const ticket = await declineConnectionRequest(ticketId, request.userId!);
+    notifyClientTicketUpdate(ticket.clientId, ticket);
+    response.json({ ticket });
+  } catch (error) {
+    sendClientTicketActionError(response, error, {
+      forbidden: 'You cannot decline another client ticket',
+      notActive: 'Ticket is not awaiting client approval',
+      failed: 'Unable to decline connection request',
+    });
   }
 });
 
 ticketRouter.post('/:ticketId/connect', requireRole('TECHNICIAN', 'ADMIN'), async (request: AuthenticatedRequest, response) => {
-  const ticketId = Number(request.params['ticketId']);
-  if (!Number.isInteger(ticketId)) {
-    response.status(400).json({ error: 'ticketId must be an integer' });
-    return;
-  }
+  const ticketId = parseTicketId(request, response);
+  if (ticketId === null) return;
 
   try {
     const connection = await connectTicket(ticketId, request.userId!, request.userRole === 'ADMIN');
-    if (connection.connected) {
-      notifyTicketUpdated({
-        id: connection.ticketId,
-        clientId: connection.clientId!,
-        status: 'ACTIVE',
-        technicianId: connection.technicianId ?? null,
-        technicianName: connection.technicianName,
-        connectedAt: connection.connectedAt,
-        disconnectedAt: connection.disconnectedAt,
-      });
-    }
-    response.json(connection);
+    const delivered = notifyClientConnectionRequested(connection.clientId, {
+      ticketId: connection.ticketId,
+      technicianId: connection.technicianId,
+      technicianName: connection.technicianName,
+      rustdeskId: connection.rustdeskId,
+    });
+    response.json({ ...connection, delivered });
   } catch (error) {
     if (error instanceof Error && error.message === 'TICKET_NOT_AVAILABLE') {
       response.status(409).json({ error: 'Ticket is not active or is assigned to another technician' });
@@ -138,18 +157,10 @@ ticketRouter.post('/:ticketId/connect', requireRole('TECHNICIAN', 'ADMIN'), asyn
       response.status(409).json({ error: 'Ticket has no computer associated' });
       return;
     }
-    if (error instanceof Error && error.message === 'RUSTDESK_BIN_NOT_CONFIGURED') {
-      response.status(503).json({ error: 'RustDesk executable is not configured' });
+    if (error instanceof Error && error.message === 'INVALID_RUSTDESK_ID') {
+      response.status(409).json({ error: 'The client computer has an invalid RustDesk ID' });
       return;
     }
-    if (error instanceof Error && (error.message === 'INVALID_RUSTDESK_ID' || error.message === 'RUSTDESK_BIN_MUST_BE_ABSOLUTE')) {
-      response.status(503).json({ error: 'RustDesk configuration is invalid' });
-      return;
-    }
-    if (error && typeof error === 'object' && 'code' in error && (error.code === 'ENOENT' || error.code === 'EACCES')) {
-      response.status(503).json({ error: 'RustDesk executable is unavailable' });
-      return;
-    }
-    response.status(500).json({ error: 'Unable to start RustDesk session' });
+    response.status(500).json({ error: 'Unable to request client approval' });
   }
 });

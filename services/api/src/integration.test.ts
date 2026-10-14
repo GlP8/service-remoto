@@ -5,6 +5,8 @@ import { createServer, type Server } from 'node:http';
 import { once } from 'node:events';
 import 'dotenv/config';
 import pg from 'pg';
+import { WebSocket } from 'ws';
+import { setupTechnicianWebSocket } from './infrastructure/realtime/technician-hub.js';
 
 const testDatabaseUrl = process.env['TEST_DATABASE_URL'];
 if (!testDatabaseUrl) {
@@ -21,17 +23,19 @@ process.env['JWT_SECRET'] = 'integration-test-only-secret-with-at-least-thirty-t
 process.env['JWT_ISSUER'] = 'service-remoto-api-integration-test';
 process.env['JWT_AUDIENCE'] = 'service-remoto-client-integration-test';
 process.env['CLIENT_ORIGIN'] = 'http://127.0.0.1:5173';
-process.env['RUSTDESK_EXECUTE'] = 'false';
 
 const { pool } = await import('./infrastructure/database/pool.js');
 const { app } = await import('./app.js');
 
 const server: Server = createServer(app);
+setupTechnicianWebSocket(server);
 let baseUrl: string;
 let clientToken: string;
 let technicianToken: string;
 let ticketId: number;
 let computerId: number;
+let clientSocket: WebSocket | null = null;
+let browserSocket: WebSocket | null = null;
 
 async function requestJson<T>(
   path: string,
@@ -113,6 +117,8 @@ before(async () => {
 });
 
 after(async () => {
+  clientSocket?.close();
+  browserSocket?.close();
   await new Promise<void>((resolve, reject) => {
     server.close((error) => error ? reject(error) : resolve());
   });
@@ -221,13 +227,60 @@ test('client-to-technician ticket lifecycle works end to end', async () => {
   assert.equal(claimedTicket.body?.ticket.status, 'ACTIVE');
   assert.equal(claimedTicket.body?.ticket.technicianId, technicianRegistration.body!.user.id);
 
-  const preparedConnection = await requestJson<{ executed: boolean; connected: boolean }>(
+  clientSocket = new WebSocket(
+    `${baseUrl.replace(/^http/, 'ws')}/ws/agent`,
+    { headers: { Authorization: `Bearer ${clientToken}` } },
+  );
+  await once(clientSocket, 'open');
+  const requestEvent = new Promise<Record<string, unknown>>((resolve, reject) => {
+    const timeout = setTimeout(() => reject(new Error('Timed out waiting for client connection request')), 2000);
+    const onMessage = (message: Buffer) => {
+      const parsed = JSON.parse(message.toString()) as Record<string, unknown>;
+      if (parsed.type !== 'connection.requested') return;
+      clearTimeout(timeout);
+      clientSocket!.off('message', onMessage);
+      resolve(parsed);
+    };
+    clientSocket!.on('message', onMessage);
+  });
+
+  const preparedConnection = await requestJson<{
+    delivered: boolean;
+    rustdeskId: string;
+  }>(
     `/tickets/${ticketId}/connect`,
     { method: 'POST', token: technicianToken },
   );
   assert.equal(preparedConnection.response.status, 200);
-  assert.equal(preparedConnection.body?.executed, false);
-  assert.equal(preparedConnection.body?.connected, false);
+  assert.equal(preparedConnection.body?.delivered, true);
+  assert.equal(preparedConnection.body?.rustdeskId, `test${suffix.slice(0, 8)}`);
+  const deliveredEvent = await requestEvent;
+  assert.equal(deliveredEvent.type, 'connection.requested');
+  assert.deepEqual(deliveredEvent.request, {
+    ticketId,
+    technicianId: technicianRegistration.body!.user.id,
+    technicianName: 'Integration Technician',
+    rustdeskId: `test${suffix.slice(0, 8)}`,
+  });
+
+  const connectionAudit = await pool.query(
+    'SELECT "connectedAt" FROM ticket WHERE id = $1',
+    [ticketId],
+  );
+  assert.equal(connectionAudit.rows[0].connectedAt, null);
+
+  browserSocket = new WebSocket(
+    `${baseUrl.replace(/^http/, 'ws')}/ws/client?token=${encodeURIComponent(clientToken)}`,
+  );
+  await once(browserSocket, 'open');
+  clientSocket.close();
+  await once(clientSocket, 'close');
+  const requestWithoutAgent = await requestJson<{ delivered: boolean }>(
+    `/tickets/${ticketId}/connect`,
+    { method: 'POST', token: technicianToken },
+  );
+  assert.equal(requestWithoutAgent.response.status, 200);
+  assert.equal(requestWithoutAgent.body?.delivered, false);
 
   const clientCannotClaim = await requestJson(`/tickets/${ticketId}/claim`, {
     method: 'PATCH',
@@ -235,12 +288,29 @@ test('client-to-technician ticket lifecycle works end to end', async () => {
   });
   assert.equal(clientCannotClaim.response.status, 403);
 
-  const closedTicket = await requestJson<{ ticket: { status: string } }>(
+  const technicianCannotDecline = await requestJson(`/tickets/${ticketId}/decline`, {
+    method: 'POST',
+    token: technicianToken,
+  });
+  assert.equal(technicianCannotDecline.response.status, 403);
+
+  const clientDeclined = await requestJson<{ ticket: { status: string } }>(
+    `/tickets/${ticketId}/decline`,
+    { method: 'POST', token: clientToken },
+  );
+  assert.equal(clientDeclined.response.status, 200);
+  assert.equal(clientDeclined.body?.ticket.status, 'CLOSED');
+  const declinedAudit = await pool.query(
+    'SELECT count(*)::int AS count FROM "connectionAuditLog" WHERE "ticketId" = $1',
+    [ticketId],
+  );
+  assert.equal(declinedAudit.rows[0].count, 0);
+
+  const technicianCannotReopen = await requestJson(
     `/tickets/${ticketId}/close`,
     { method: 'PATCH', token: technicianToken },
   );
-  assert.equal(closedTicket.response.status, 200);
-  assert.equal(closedTicket.body?.ticket.status, 'CLOSED');
+  assert.equal(technicianCannotReopen.response.status, 409);
 
   const clientTicketsAfterClose = await requestJson<{ tickets: Array<{ status: string }> }>('/tickets', {
     token: clientToken,

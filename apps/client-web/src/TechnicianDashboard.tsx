@@ -17,8 +17,7 @@ type Ticket = {
 type ConnectionPreparation = {
   ticketId: number
   rustdeskId: string
-  executed: boolean
-  connected: boolean
+  delivered: boolean
 }
 
 async function api<T>(path: string, token: string, options: RequestInit = {}): Promise<T> {
@@ -168,12 +167,12 @@ export function TechnicianDashboard({
                 <div>
                   <strong>Solicitud #{ticket.id}</strong>
                   <span>{ticket.computerId ? `Equipo #${ticket.computerId}` : 'Sin equipo asociado'} · {ticket.connectedAt ? `Conexión iniciada ${formatDate(ticket.connectedAt)}` : 'Aún sin conexión remota'}</span>
-                  {preparation && <span className="status-label">{preparation.connected
-                    ? 'RustDesk se inició en el equipo que ejecuta la API.'
-                    : `Modo de prueba: comando preparado para el ID ${preparation.rustdeskId}; no se inició ninguna conexión.`}</span>}
+                  {preparation && <span className="status-label">{preparation.delivered
+                    ? `Solicitud enviada. Inicia RustDesk en tu equipo con el ID ${preparation.rustdeskId}; el cliente debe aprobar aqui y en RustDesk.`
+                    : `El agente del cliente no esta conectado. Inicia el agente en ese equipo. ID RustDesk: ${preparation.rustdeskId}.`}</span>}
                 </div>
                 <button className="small-button" disabled={busyTicketId === ticket.id || !ticket.computerId} onClick={() => void performTicketAction(ticket.id, 'connect')}>
-                  {busyTicketId === ticket.id ? 'Procesando…' : 'Preparar RustDesk'}
+                  {busyTicketId === ticket.id ? 'Procesando…' : 'Solicitar acceso'}
                 </button>
                 <button className="small-button" disabled={busyTicketId === ticket.id} onClick={() => void performTicketAction(ticket.id, 'close')}>
                   Cerrar atención

@@ -31,3 +31,5 @@ GitHub Actions provides a fresh PostgreSQL test database automatically.
 The API build emits a compiled Node.js server under `dist`; `npm start` runs
 that output. See [`docs/staging.md`](../../docs/staging.md) for Render service
 configuration, one-time staging database initialization, and smoke tests.
+RustDesk access requests are sent only to an authenticated Windows agent
+connected to `/ws/agent`; the API process never launches RustDesk.
