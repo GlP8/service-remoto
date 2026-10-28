@@ -131,3 +131,11 @@ export function notifyClientConnectionRequested(
 ) {
   return sendToClient(clientAgents, clientId, JSON.stringify({ type: 'connection.requested', request }));
 }
+
+export function notifyConnectionApproved(approval: { ticketId: number; clientId: number; technicianId: number; approvedAt: string }) {
+  const event = JSON.stringify({ type: 'connection.approved', approval });
+  for (const technician of technicians) {
+    if (technician.readyState === WebSocket.OPEN) technician.send(event);
+  }
+  sendToClient(clients, approval.clientId, event);
+}

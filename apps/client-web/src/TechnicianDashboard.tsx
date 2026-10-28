@@ -47,6 +47,7 @@ export function TechnicianDashboard({
 }) {
   const [tickets, setTickets] = useState<Ticket[]>([])
   const [preparations, setPreparations] = useState<Record<number, ConnectionPreparation>>({})
+  const [approvals, setApprovals] = useState<Record<number, string>>({})
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
   const [busyTicketId, setBusyTicketId] = useState<number | null>(null)
@@ -75,6 +76,42 @@ export function TechnicianDashboard({
     const timer = window.setInterval(() => void fetchTickets(), 10_000)
     return () => window.clearInterval(timer)
   }, [fetchTickets])
+
+  // Client approvals arrive only over the technicians channel; they are not stored by the API yet.
+  useEffect(() => {
+    let socket: WebSocket | null = null
+    let retryTimer: number | null = null
+    let stopped = false
+    const connect = () => {
+      const url = new URL(API_URL)
+      url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:'
+      url.pathname = '/ws/technicians'
+      url.search = new URLSearchParams({ token }).toString()
+      socket = new WebSocket(url.toString())
+      socket.onmessage = (event) => {
+        try {
+          const message = JSON.parse(event.data) as { type?: string; approval?: { ticketId: number; approvedAt: string } }
+          if (message.type === 'connection.approved' && message.approval) {
+            const { ticketId, approvedAt } = message.approval
+            setApprovals((current) => ({ ...current, [ticketId]: approvedAt }))
+          } else if (message.type === 'ticket.updated' || message.type === 'ticket.created') {
+            void fetchTickets()
+          }
+        } catch {
+          // Ignore malformed server messages and keep the connection alive.
+        }
+      }
+      socket.onclose = () => {
+        if (!stopped) retryTimer = window.setTimeout(connect, 5000)
+      }
+    }
+    connect()
+    return () => {
+      stopped = true
+      if (retryTimer !== null) window.clearTimeout(retryTimer)
+      socket?.close()
+    }
+  }, [token, fetchTickets])
 
   async function performTicketAction(ticketId: number, action: 'claim' | 'close' | 'connect') {
     setBusyTicketId(ticketId)
@@ -162,12 +199,15 @@ export function TechnicianDashboard({
             ? <div className="quiet-state"><TicketCheck size={24} /><span>No tienes atenciones activas.</span></div>
             : <div className="ticket-list">{activeTickets.map((ticket) => {
               const preparation = preparations[ticket.id]
+              const approvedAt = approvals[ticket.id]
               return <article className="ticket-row" key={ticket.id}>
                 <div className="ticket-icon active"><Monitor size={18} /></div>
                 <div>
                   <strong>Solicitud #{ticket.id}</strong>
                   <span>{ticket.computerId ? `Equipo #${ticket.computerId}` : 'Sin equipo asociado'} · {ticket.connectedAt ? `Conexión iniciada ${formatDate(ticket.connectedAt)}` : 'Aún sin conexión remota'}</span>
-                  {preparation && <span className="status-label">{preparation.delivered
+                  {approvedAt
+                    ? <span className="status-label">{`El cliente aprobo el acceso ${formatDate(approvedAt)}. Conectate en RustDesk; el cliente aun debe aceptar alli.`}</span>
+                    : preparation && <span className="status-label">{preparation.delivered
                     ? `Solicitud enviada. Inicia RustDesk en tu equipo con el ID ${preparation.rustdeskId}; el cliente debe aprobar aqui y en RustDesk.`
                     : `El agente del cliente no esta conectado. Inicia el agente en ese equipo. ID RustDesk: ${preparation.rustdeskId}.`}</span>}
                 </div>

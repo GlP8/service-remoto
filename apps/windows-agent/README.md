@@ -18,6 +18,15 @@ The executable is written to `dist\ServiceRemotoAgent.exe`. The agent uses
 Windows Forms and .NET Framework 4.8 and does not require Node.js or the .NET
 SDK at runtime. The RustDesk application must be installed separately.
 
+## Session and connection
+
+- If the API cannot be reached at startup, the agent opens with the saved
+  session and keeps retrying, waiting longer after each failure (3 s up to
+  60 s).
+- **Cerrar agente** closes the window and keeps the saved session.
+  **Cerrar sesion** deletes the saved session from this computer; the issued
+  token stays valid on the server until it expires (one day).
+
 ## Pilot limitations
 
 - Start the agent before a technician requests access. Requests are delivered
@@ -29,8 +38,11 @@ SDK at runtime. The RustDesk application must be installed separately.
 - The agent does not yet inspect or change RustDesk settings. Verify manually
   that unattended access/passwords are disabled; the agent cannot enforce that
   policy in this pilot.
-- Client approval is currently local to the agent and is not persisted as a
-  consent audit event or enforced as a RustDesk network lock. RustDesk's native
+- Approving calls `POST /tickets/:id/approve`, which notifies the technician
+  dashboard in real time. The approval is not yet persisted as a consent audit
+  event (that needs a schema change) and is not enforced as a RustDesk network
+  lock. If the API is unreachable the agent still opens RustDesk and says the
+  technician was not notified. RustDesk's native
   confirmation is the actual access gate.
 - Approval means only that the customer accepted the request. The agent cannot
   yet observe RustDesk's actual session state, so it does not mark

@@ -269,6 +269,20 @@ test('client-to-technician ticket lifecycle works end to end', async () => {
   );
   assert.equal(connectionAudit.rows[0].connectedAt, null);
 
+  const technicianCannotApprove = await requestJson(`/tickets/${ticketId}/approve`, {
+    method: 'POST',
+    token: technicianToken,
+  });
+  assert.equal(technicianCannotApprove.response.status, 403);
+
+  const clientApproved = await requestJson<{ approval: { ticketId: number; technicianId: number } }>(
+    `/tickets/${ticketId}/approve`,
+    { method: 'POST', token: clientToken },
+  );
+  assert.equal(clientApproved.response.status, 200);
+  assert.equal(clientApproved.body?.approval.ticketId, ticketId);
+  assert.equal(clientApproved.body?.approval.technicianId, technicianRegistration.body!.user.id);
+
   browserSocket = new WebSocket(
     `${baseUrl.replace(/^http/, 'ws')}/ws/client?token=${encodeURIComponent(clientToken)}`,
   );
