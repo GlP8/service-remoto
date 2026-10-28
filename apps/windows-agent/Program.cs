@@ -47,12 +47,10 @@ namespace ServiceRemotoAgent
                     Notify(error.Message, MessageBoxIcon.Information);
                     AgentSettings.Delete();
                 }
-                catch (Exception error)
+                catch (Exception)
                 {
-                    Notify(
-                        "No se pudo validar la sesion guardada. Revisa tu conexion e intenta de nuevo. Detalle: " + error.Message,
-                        MessageBoxIcon.Information);
-                    return;
+                    // Keep the saved session: the agent window shows the connection state and keeps retrying.
+                    sessionValid = true;
                 }
             }
 
@@ -349,6 +347,7 @@ namespace ServiceRemotoAgent
         private readonly Button _end = new Button();
         private readonly Button _confirmEnded = new Button();
         private readonly Button _logout = new Button();
+        private readonly Button _signOut = new Button();
         private int _ticketId;
         private bool _approved;
         private bool _serverClosed;
@@ -356,6 +355,9 @@ namespace ServiceRemotoAgent
         private bool _closingAllowed;
         private bool _reauthenticating;
         private bool _reauthenticationDismissed;
+
+        private const int MinRetryDelayMs = 3000;
+        private const int MaxRetryDelayMs = 60000;
 
         private const string IdleDetails =
             "Esta ventana no habilita acceso desatendido. RustDesk debe pedir confirmacion en este equipo.";
@@ -368,7 +370,7 @@ namespace ServiceRemotoAgent
             FormBorderStyle = FormBorderStyle.FixedDialog;
             MaximizeBox = false;
             MinimizeBox = false;
-            ClientSize = new System.Drawing.Size(470, 250);
+            ClientSize = new System.Drawing.Size(470, 295);
 
             Label title = new Label
             {
@@ -387,7 +389,7 @@ namespace ServiceRemotoAgent
             _approve.Text = "Permitir y abrir RustDesk";
             _approve.SetBounds(22, 166, 190, 34);
             _approve.Enabled = false;
-            _approve.Click += delegate { Approve(); };
+            _approve.Click += async delegate { await Approve(); };
 
             _decline.Text = "Rechazar";
             _decline.SetBounds(222, 166, 100, 34);
@@ -407,8 +409,12 @@ namespace ServiceRemotoAgent
             _confirmEnded.Click += async delegate { await ConfirmManualClose(); };
 
             _logout.Text = "Cerrar agente";
-            _logout.SetBounds(362, 210, 80, 30);
+            _logout.SetBounds(322, 250, 120, 30);
             _logout.Click += delegate { _closingAllowed = true; Close(); };
+
+            _signOut.Text = "Cerrar sesion";
+            _signOut.SetBounds(22, 250, 120, 30);
+            _signOut.Click += delegate { SignOut(); };
 
             Controls.Add(title);
             Controls.Add(_status);
@@ -418,8 +424,31 @@ namespace ServiceRemotoAgent
             Controls.Add(_end);
             Controls.Add(_confirmEnded);
             Controls.Add(_logout);
+            Controls.Add(_signOut);
             FormClosing += OnFormClosing;
             Shown += delegate { Task.Run(() => ListenForRequests(_shutdown.Token)); };
+        }
+
+        private void SignOut()
+        {
+            if (_ticketId != 0) return;
+            DialogResult confirmation = MessageBox.Show(
+                "Se borrara la sesion guardada en este equipo y el agente se cerrara. La proxima vez tendras que iniciar sesion. Deseas continuar?",
+                "Cerrar sesion",
+                MessageBoxButtons.YesNo,
+                MessageBoxIcon.Question);
+            if (confirmation != DialogResult.Yes) return;
+            try
+            {
+                AgentSettings.Delete();
+            }
+            catch (Exception error)
+            {
+                Program.Notify("No se pudo borrar la sesion guardada: " + error.Message, MessageBoxIcon.Error);
+                return;
+            }
+            _closingAllowed = true;
+            Close();
         }
 
         private void OnFormClosing(object sender, FormClosingEventArgs eventArgs)
@@ -439,6 +468,7 @@ namespace ServiceRemotoAgent
 
         private async Task ListenForRequests(CancellationToken cancellationToken)
         {
+            int retryDelay = MinRetryDelayMs;
             while (!cancellationToken.IsCancellationRequested)
             {
                 Exception connectionError = null;
@@ -449,6 +479,7 @@ namespace ServiceRemotoAgent
                     {
                         socket.Options.SetRequestHeader("Authorization", "Bearer " + credentials.Token);
                         await socket.ConnectAsync(AgentApi.WebSocketUri(credentials.ApiUrl), cancellationToken);
+                        retryDelay = MinRetryDelayMs;
                         SetConnectionStatus("Conectado. Esperando una solicitud de soporte.");
                         byte[] buffer = new byte[8192];
                         while (socket.State == WebSocketState.Open && !cancellationToken.IsCancellationRequested)
@@ -487,7 +518,9 @@ namespace ServiceRemotoAgent
 
                 try
                 {
-                    await Task.Delay(3000, cancellationToken);
+                    // Wait longer after each failure so an offline API or expired session is not polled every few seconds.
+                    await Task.Delay(retryDelay, cancellationToken);
+                    if (connectionError != null) retryDelay = Math.Min(retryDelay * 2, MaxRetryDelayMs);
                 }
                 catch (OperationCanceledException)
                 {
@@ -614,6 +647,7 @@ namespace ServiceRemotoAgent
             _decline.Enabled = true;
             _end.Enabled = false;
             _logout.Enabled = false;
+            _signOut.Enabled = false;
             TopMost = true;
             WindowState = FormWindowState.Normal;
             Show();
@@ -637,12 +671,45 @@ namespace ServiceRemotoAgent
             }
         }
 
-        private void Approve()
+        private async Task Approve()
         {
             if (_ticketId == 0 || _approved) return;
+            int ticketId = _ticketId;
             _approve.Enabled = false;
             _decline.Enabled = false;
-            _status.Text = "Permiso concedido. Confirme la sesion en RustDesk.";
+            string notice = "";
+            try
+            {
+                AgentCredentials credentials = _credentials;
+                await AgentApi.Post(credentials, "/tickets/" + ticketId + "/approve");
+            }
+            catch (SessionExpiredException)
+            {
+                _status.Text = "La sesion vencio. Inicia sesion y vuelve a permitir la solicitud.";
+                _approve.Enabled = true;
+                _decline.Enabled = true;
+                _reauthenticationDismissed = false;
+                RequestReauthentication();
+                return;
+            }
+            catch (ApiException error)
+            {
+                if (error.StatusCode == HttpStatusCode.Conflict || error.StatusCode == HttpStatusCode.NotFound ||
+                    error.StatusCode == HttpStatusCode.Forbidden)
+                {
+                    ResetTicket("La solicitud ya no esta activa. Si RustDesk muestra una ventana de acceso, rechazala tambien alli.");
+                    return;
+                }
+                notice = " No se pudo avisar al tecnico: " + error.Message;
+            }
+            catch (Exception error)
+            {
+                // RustDesk's own prompt is the access gate, so a lost notification does not block the session.
+                notice = " No se pudo avisar al tecnico: " + error.Message;
+            }
+            if (_ticketId != ticketId) return;
+
+            _status.Text = "Permiso concedido. Confirme la sesion en RustDesk." + notice;
             _details.Text = "No se concede acceso desatendido. Si RustDesk pide confirmacion, revisa y acepta solo si reconoces al tecnico.";
             try
             {
@@ -904,6 +971,7 @@ namespace ServiceRemotoAgent
             _end.Text = "Cerrar conexion";
             _confirmEnded.Enabled = false;
             _logout.Enabled = true;
+            _signOut.Enabled = true;
             TopMost = false;
         }
 
@@ -922,6 +990,7 @@ namespace ServiceRemotoAgent
             _end.Enabled = !_localClosed;
             _confirmEnded.Enabled = !_localClosed;
             _logout.Enabled = false;
+            _signOut.Enabled = false;
             TopMost = true;
             WindowState = FormWindowState.Normal;
             Activate();

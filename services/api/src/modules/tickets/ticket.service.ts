@@ -182,6 +182,23 @@ export async function declineConnectionRequest(
   return ticket;
 }
 
+export async function approveConnectionRequest(ticketId: number, authenticatedUserId: number) {
+  const result = await pool.query<{ id: number; clientId: number; technicianId: number | null; status: string; connectedAt: string | null }>(
+    'SELECT id, "clientId", "technicianId", status, "connectedAt" FROM ticket WHERE id = $1',
+    [ticketId],
+  );
+  const ticket = result.rows[0];
+  if (!ticket) throw new TicketActionError('TICKET_NOT_FOUND', 'Ticket not found');
+  if (ticket.clientId !== authenticatedUserId) {
+    throw new TicketActionError('TICKET_FORBIDDEN', 'Ticket does not belong to the authenticated client');
+  }
+  if (ticket.status !== 'ACTIVE' || ticket.technicianId === null || ticket.connectedAt !== null) {
+    throw new TicketActionError('TICKET_NOT_ACTIVE', 'Ticket is not awaiting client approval');
+  }
+  // Not persisted yet: storing approvals needs a schema change. RustDesk's own prompt stays the access gate.
+  return { ticketId: ticket.id, clientId: ticket.clientId, technicianId: ticket.technicianId, approvedAt: new Date().toISOString() };
+}
+
 export async function connectTicket(ticketId: number, userId: number, isAdmin: boolean) {
   const result = await pool.query<{
     id: number;

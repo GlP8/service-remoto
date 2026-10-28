@@ -1,8 +1,8 @@
 import { Router, type Response } from 'express';
 import type { AuthenticatedRequest } from '../auth/auth.middleware.js';
 import { requireAuth, requireRole } from '../auth/auth.middleware.js';
-import { notifyClientConnectionRequested, notifyClientTicketUpdate, notifyTicketCreated, notifyTicketUpdated } from '../../infrastructure/realtime/technician-hub.js';
-import { claimTicket, closeTicket, connectTicket, createTicket, declineConnectionRequest, disconnectTicket, listTickets, TicketActionError } from './ticket.service.js';
+import { notifyClientConnectionRequested, notifyClientTicketUpdate, notifyConnectionApproved, notifyTicketCreated, notifyTicketUpdated } from '../../infrastructure/realtime/technician-hub.js';
+import { approveConnectionRequest, claimTicket, closeTicket, connectTicket, createTicket, declineConnectionRequest, disconnectTicket, listTickets, TicketActionError } from './ticket.service.js';
 
 export const ticketRouter = Router();
 
@@ -131,6 +131,23 @@ ticketRouter.post('/:ticketId/decline', requireRole('CLIENT'), async (request: A
       forbidden: 'You cannot decline another client ticket',
       notActive: 'Ticket is not awaiting client approval',
       failed: 'Unable to decline connection request',
+    });
+  }
+});
+
+ticketRouter.post('/:ticketId/approve', requireRole('CLIENT'), async (request: AuthenticatedRequest, response) => {
+  const ticketId = parseTicketId(request, response);
+  if (ticketId === null) return;
+
+  try {
+    const approval = await approveConnectionRequest(ticketId, request.userId!);
+    notifyConnectionApproved(approval);
+    response.json({ approval });
+  } catch (error) {
+    sendClientTicketActionError(response, error, {
+      forbidden: 'You cannot approve another client ticket',
+      notActive: 'Ticket is not awaiting client approval',
+      failed: 'Unable to approve connection request',
     });
   }
 });
